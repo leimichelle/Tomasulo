@@ -172,6 +172,56 @@ void execute_To_CDB(int current_cycle) {
 void issue_To_execute(int current_cycle) {
 
   /* ECE552: YOUR CODE GOES HERE */
+	for (int i=0; i<FU_INT_SIZE; i++) {
+		if (fuINT[i] == NULL) {
+			//function unit is available
+			bool found = false;
+			int j = 0;
+	    int oldest_rs_int = -1;
+			while (j < RESERV_INT_SIZE) {
+			//Find an int instruction that is not executed yet and is ready to be executed
+				if(reservINT[j]!=NULL && reservINT[j]->tom_execute_cycle==0 && reservINT[j]->Q[0]==NULL && reservINT[j]->Q[1]==NULL && reservINT[j]->Q[2]==NULL) {
+					if (!found) {
+						oldest_rs_int = j;
+						found = true;
+					}
+					else if (reservINT[j]->tom_dispatch_cycle<=reservINT[oldest_rs_int]->tom_dispatch_cycle) {
+						oldest_rs_int = j;
+					}
+				}
+				j++;	
+			}
+			if (found) {
+				reservINT[oldest_rs_int]->tom_execute_cycle = current_cycle;
+			  fuINT[i] = reservINT[oldest_rs_int];
+			}
+		}
+	}				
+	for (int i=0; i<FU_FP_SIZE; i++) {
+		if (fuFP[i] == NULL) {
+			//function unit is available
+			bool found = false;
+			int j = 0;
+	    int oldest_rs_fp = -1;
+			while (j < RESERV_FP_SIZE) {
+			//Find an int instruction that is not executed yet and is ready to be executed
+				if(reservFP[j]!=NULL && reservFP[j]->tom_execute_cycle==0 && reservFP[j]->Q[0]==NULL && reservFP[j]->Q[1]==NULL && reservFP[j]->Q[2]==NULL) {
+					if (!found) {
+						oldest_rs_fp = j;
+						found = true;
+					}
+					else if (reservFP[j]->tom_dispatch_cycle<=reservFP[oldest_rs_fp]->tom_dispatch_cycle) {
+						oldest_rs_fp = j;
+					}
+				}
+				j++;	
+			}
+			if (found) {
+				reservINT[oldest_rs_fp]->tom_execute_cycle = current_cycle;
+			 	fuFP[i] = reservINT[oldest_rs_fp];	
+			}
+		}
+	}				
 }
 
 /* 
@@ -228,6 +278,7 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
  */
 counter_t runTomasulo(instruction_trace_t* trace)
 {
+  instruction_t* table = trace->table;
   //initialize instruction queue
   int i;
   for (i = 0; i < INSTR_QUEUE_SIZE; i++) {
@@ -257,17 +308,15 @@ counter_t runTomasulo(instruction_trace_t* trace)
   for (reg = 0; reg < MD_TOTAL_REGS; reg++) {
     map_table[reg] = NULL;
   }
-  
-  int cycle = 1;
+  int cycle = 1;  
   while (true) {
-
      /* ECE552: YOUR CODE GOES HERE */
 
-     cycle++;
-
-     if (is_simulation_done(sim_num_insn))
-        break;
-  }
+		cycle ++;
+		
+    if (is_simulation_done(sim_num_insn))
+      break;
+	}
   
   return cycle;
 }
