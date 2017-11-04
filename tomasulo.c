@@ -77,10 +77,14 @@
 
 /* VARIABLES */
 
+static int doneCount = 0;
+
 //instruction queue for tomasulo
 static instruction_t* instr_queue[INSTR_QUEUE_SIZE];
 //number of instructions in the instruction queue
 static int instr_queue_size = 0;
+static int ifq_head = 0;
+static int ifq_tail = 0;
 
 //reservation stations (each reservation station entry contains a pointer to an instruction)
 static instruction_t* reservINT[RESERV_INT_SIZE];
@@ -99,9 +103,6 @@ static instruction_t* map_table[MD_TOTAL_REGS];
 //the index of the last instruction fetched
 static int fetch_index = 0;
 
-//the index of the last instruction retired
-static int retired_index = -1;
-
 /* FUNCTIONAL UNITS */
 
 
@@ -119,15 +120,7 @@ static int retired_index = -1;
  */
 static bool is_simulation_done(counter_t sim_insn) {
 
-  /* ECE552: YOUR CODE GOES HERE */
-  bool done;
-  if (retired_index == sim_insn - 1) {
-    done = true; //ECE552: you can change this as needed; we've added this so the code provided to you compiles
-  }
-  else {
-    done = false;
-  }
-  return true;
+  return doneCount == sim_insn;
 }
 
 /* 
@@ -140,8 +133,68 @@ static bool is_simulation_done(counter_t sim_insn) {
  */
 void CDB_To_retire(int current_cycle) {
 
-  /* ECE552: YOUR CODE GOES HERE */
+  if (commonDataBus) {
+    for (int i = 0; i < 2; i++) {
+      if (map_table[commonDataBus->r_out[i]] == commonDataBus) {
+        map_table[commonDataBus->r_out[i]] = NULL;
+      }
+    }
+    if(USES_INT_FU(commonDataBus->op)) {
+      for (int i = 0; i < RESERV_INT_SIZE; i++) {
+        for (int j = 0; j < 3; j++) {
+          if (reservINT[i]->Q[j] == commonDataBus) {
+            reservINT[i]->Q[j] = NULL;
+          }
+        }
+      }
+    } else if (USES_FP_FU(commonDataBus->op)) {
+      for (int i = 0; i < RESERV_FP_SIZE; i++) {
+        for (int j = 0; j < 3; j++) {
+          if (reservFP[i]->Q[j] == commonDataBus) {
+            reservFP[i]->Q[j] = NULL;
+          }
+        }
+      }
+    } else {
+      printf("Error: unrecognized instruction\n");
+      assert(false);
+    }
+    commonDataBus = NULL;
+    doneCount++;
+  }
+}
 
+void free_stations(instruction_t *instr) {
+  if (USES_INT_FU(instr->op)) {
+    for (int i = 0; i < FU_INT_SIZE; i++) {
+      if (fuINT[i] == instr) {
+        fuINT[i] = NULL;
+        break;
+      }
+    }
+    for (int i = 0; i < RESERV_INT_SIZE; i++) {
+      if (reservINT[i] == instr) {
+        reservINT[i] = NULL;
+        break;
+      }
+    }
+  } else if (USES_FP_FU(instr->op)) {
+    for (int i = 0; i < FU_FP_SIZE; i++) {
+      if (fuFP[i] == instr) {
+        fuFP[i] = NULL;
+        break;
+      }
+    }
+    for (int i = 0; i < RESERV_FP_SIZE; i++) {
+      if (reservFP[i] == instr) {
+        reservFP[i] = NULL;
+        break;
+      }
+    }
+  } else {
+    printf("Error: instruction not recognized\n");
+    assert(false);
+  }
 }
 
 
@@ -155,7 +208,33 @@ void CDB_To_retire(int current_cycle) {
  */
 void execute_To_CDB(int current_cycle) {
 
-  /* ECE552: YOUR CODE GOES HERE */
+  int oldest = -1;
+  instruction_t *oldest_instr = NULL;
+  
+  for (int i = 0; i < FU_INT_SIZE; i++) {
+    if (fuINT[i] && current_cycle >= fuINT[i]->tom_execute_cycle + FU_INT_LATENCY) {
+      if (IS_STORE(fuINT[i]->op)) {
+        free_stations(fuINT[i]);
+        doneCount++;
+      }
+      if (oldest == -1 || fuINT[i]->index < oldest) {
+        oldest = fuINT[i]->index;
+        oldest_instr = fuINT[i];
+      }
+    }
+  }
+  if (fuFP[0] && current_cycle >= fuFP[0]->tom_execute_cycle + FU_FP_LATENCY) {
+    if (oldest == -1 || fuFP[0]->index < oldest) {
+      oldest = fuFP[0]->index;
+      oldest_instr = fuFP[0];
+    }
+  }
+  
+  if (oldest_instr) {
+    oldest_instr->tom_cdb_cycle = current_cycle;
+    free_stations(oldest_instr);
+    commonDataBus = oldest_instr;
+  }
 
 }
 
@@ -174,6 +253,19 @@ void issue_To_execute(int current_cycle) {
   /* ECE552: YOUR CODE GOES HERE */
 }
 
+void map_operands(instruction_t* instr) {
+  for (int i = 0; i < 3; i++) {
+    if (instr->r_in[i] != DNA) {
+      instr->Q[i] = map_table[instr->r_in[i]];
+    }
+  }
+  for (int i = 0; i < 2; i++) {
+    if (instr->r_out[i] != DNA) {
+      map_table[instr->r_out[i]] = instr;
+    }
+  }
+}
+
 /* 
  * Description: 
  * 	Moves instruction(s) from the dispatch stage to the issue stage
@@ -183,8 +275,43 @@ void issue_To_execute(int current_cycle) {
  * 	None
  */
 void dispatch_To_issue(int current_cycle) {
+  if(instr_queue_size > 0) {
+    instruction_t* head_instr = instr_queue[ifq_head];
+    enum md_opcode op = head_instr->op;
+    if (IS_UNCOND_CTRL(op) || IS_COND_CTRL(op)) {
+      ifq_head = (ifq_head + 1) % INSTR_QUEUE_SIZE;
+      instr_queue_size--;
+      doneCount++;
+      
+    } else if (USES_FP_FU(op)) {
+      for (int i = 0; i < RESERV_FP_SIZE; i++) {
+        if (reservFP[i] == NULL) {
+          reservFP[i] = head_instr;
+          head_instr->tom_issue_cycle = current_cycle;
+          ifq_head = (ifq_head + 1) % INSTR_QUEUE_SIZE;
+          instr_queue_size--;
+          map_operands(head_instr);
+        }
+      }
+      
+    } else if (USES_INT_FU(op)) {
+      for (int i = 0; i < RESERV_INT_SIZE; i++) {
+        if (reservINT[i] == NULL) {
+          reservINT[i] = head_instr;
+          head_instr->tom_issue_cycle = current_cycle;
+          ifq_head = (ifq_head + 1) % INSTR_QUEUE_SIZE;
+          instr_queue_size--;
+          map_operands(head_instr);
+        }
+      }
+      
+    } else {
+      //unrecognized instruction
+      printf("Unrecognized instruction\n");
+      assert(false);
+    }
 
-  /* ECE552: YOUR CODE GOES HERE */
+  }
 }
 
 /* 
@@ -196,8 +323,15 @@ void dispatch_To_issue(int current_cycle) {
  * 	None
  */
 void fetch(instruction_trace_t* trace) {
-
-  /* ECE552: YOUR CODE GOES HERE */
+  instruction_t* new_instr;
+  do {
+    new_instr = get_instr(trace, fetch_index);
+    if (IS_TRAP(new_instr->op)) {
+      doneCount++;
+    }
+    fetch_index++;
+  } while (IS_TRAP(new_instr->op));
+  instr_queue[ifq_tail] = new_instr;
 }
 
 /* 
@@ -210,10 +344,12 @@ void fetch(instruction_trace_t* trace) {
  * 	None
  */
 void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
-
-  fetch(trace);
-
-  /* ECE552: YOUR CODE GOES HERE */
+  if (instr_queue_size < INSTR_QUEUE_SIZE) {
+    fetch(trace);
+    instr_queue[ifq_tail]->tom_dispatch_cycle = current_cycle;
+    ifq_tail = (ifq_tail+1) % INSTR_QUEUE_SIZE;
+    instr_queue_size++;
+  }
 }
 
 /* 
