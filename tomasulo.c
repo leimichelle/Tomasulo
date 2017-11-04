@@ -358,6 +358,11 @@ void dispatch_To_issue(int current_cycle) {
     } else {
       //unrecognized instruction
       printf("Unrecognized instruction\n");
+			printf("%lu\n", MD_OP_FLAGS(op));
+  		md_print_insn(head_instr->inst, head_instr->pc, stdout);
+			if (IS_TRAP(op)){
+				printf("IT'S A TRAP\n");
+			}
       assert(false);
     }
 
@@ -375,12 +380,13 @@ void dispatch_To_issue(int current_cycle) {
 void fetch(instruction_trace_t* trace) {
   instruction_t* new_instr;
   do {
+    fetch_index++;
     new_instr = get_instr(trace, fetch_index);
     if (IS_TRAP(new_instr->op)) {
       doneCount++;
     }
-    fetch_index++;
   } while (IS_TRAP(new_instr->op));
+
   instr_queue[ifq_tail] = new_instr;
 }
 
@@ -447,8 +453,12 @@ counter_t runTomasulo(instruction_trace_t* trace)
   int cycle = 1;  
   while (true) {
      /* ECE552: YOUR CODE GOES HERE */
-
-		cycle ++;
+		CDB_To_retire(cycle);
+		execute_To_CDB(cycle);
+		issue_To_execute(cycle);
+		dispatch_To_issue(cycle);
+		fetch_To_dispatch(trace,cycle);
+		cycle++;
 		
     if (is_simulation_done(sim_num_insn))
       break;
