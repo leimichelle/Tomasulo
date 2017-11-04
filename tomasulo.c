@@ -139,26 +139,20 @@ void CDB_To_retire(int current_cycle) {
         map_table[commonDataBus->r_out[i]] = NULL;
       }
     }
-    if(USES_INT_FU(commonDataBus->op)) {
-      for (int i = 0; i < RESERV_INT_SIZE; i++) {
-        for (int j = 0; j < 3; j++) {
-          if (reservINT[i]->Q[j] == commonDataBus) {
-            reservINT[i]->Q[j] = NULL;
-          }
-        }
-      }
-    } else if (USES_FP_FU(commonDataBus->op)) {
-      for (int i = 0; i < RESERV_FP_SIZE; i++) {
-        for (int j = 0; j < 3; j++) {
-          if (reservFP[i]->Q[j] == commonDataBus) {
-            reservFP[i]->Q[j] = NULL;
-          }
-        }
-      }
-    } else {
-      printf("Error: unrecognized instruction\n");
-      assert(false);
-    }
+		for (int i = 0; i < RESERV_INT_SIZE; i++) {
+			for (int j = 0; j < 3; j++) {
+				if (reservINT[i]!=NULL && reservINT[i]->Q[j]!= NULL && reservINT[i]->Q[j] == commonDataBus) {
+					reservINT[i]->Q[j] = NULL;
+				}
+			}
+		}
+		for (int i = 0; i < RESERV_FP_SIZE; i++) {
+			for (int j = 0; j < 3; j++) {
+				if (reservFP[i]!=NULL && reservFP[i]->Q[j]!= NULL && reservFP[i]->Q[j] == commonDataBus) {
+					reservFP[i]->Q[j] = NULL;
+				}
+			}
+		}
     commonDataBus = NULL;
     doneCount++;
   }
@@ -217,7 +211,7 @@ void execute_To_CDB(int current_cycle) {
         free_stations(fuINT[i]);
         doneCount++;
       }
-      if (oldest == -1 || fuINT[i]->index < oldest) {
+			else if (oldest == -1 || fuINT[i]->index < oldest) {
         oldest = fuINT[i]->index;
         oldest_instr = fuINT[i];
       }
@@ -264,7 +258,7 @@ void issue_To_execute(int current_cycle) {
 						oldest_rs_int = j;
 						found = true;
 					}
-					else if (reservINT[j]->tom_dispatch_cycle<=reservINT[oldest_rs_int]->tom_dispatch_cycle) {
+					else if (reservINT[j]->index<reservINT[oldest_rs_int]->index) {
 						oldest_rs_int = j;
 					}
 				}
@@ -296,8 +290,8 @@ void issue_To_execute(int current_cycle) {
 				j++;	
 			}
 			if (found) {
-				reservINT[oldest_rs_fp]->tom_execute_cycle = current_cycle;
-			 	fuFP[i] = reservINT[oldest_rs_fp];	
+				reservFP[oldest_rs_fp]->tom_execute_cycle = current_cycle;
+			 	fuFP[i] = reservFP[oldest_rs_fp];	
 			}
 		}
 	}				
@@ -341,6 +335,7 @@ void dispatch_To_issue(int current_cycle) {
           ifq_head = (ifq_head + 1) % INSTR_QUEUE_SIZE;
           instr_queue_size--;
           map_operands(head_instr);
+					break;
         }
       }
       
@@ -352,17 +347,13 @@ void dispatch_To_issue(int current_cycle) {
           ifq_head = (ifq_head + 1) % INSTR_QUEUE_SIZE;
           instr_queue_size--;
           map_operands(head_instr);
+					break;
         }
       }
       
     } else {
       //unrecognized instruction
       printf("Unrecognized instruction\n");
-			printf("%lu\n", MD_OP_FLAGS(op));
-  		md_print_insn(head_instr->inst, head_instr->pc, stdout);
-			if (IS_TRAP(op)){
-				printf("IT'S A TRAP\n");
-			}
       assert(false);
     }
 
@@ -400,7 +391,7 @@ void fetch(instruction_trace_t* trace) {
  * 	None
  */
 void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
-  if (instr_queue_size < INSTR_QUEUE_SIZE) {
+  if (instr_queue_size < INSTR_QUEUE_SIZE && fetch_index < sim_num_insn) {
     fetch(trace);
     instr_queue[ifq_tail]->tom_dispatch_cycle = current_cycle;
     ifq_tail = (ifq_tail+1) % INSTR_QUEUE_SIZE;
